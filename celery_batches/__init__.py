@@ -16,7 +16,8 @@ from typing import (
 
 from celery_batches.trace import apply_batches_task
 
-from celery import VERSION as CELERY_VERSION, signals
+from celery import VERSION as CELERY_VERSION
+from celery import signals
 from celery.app import Celery
 from celery.app.task import Task
 from celery.concurrency.base import BasePool
