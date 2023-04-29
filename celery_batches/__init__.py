@@ -1,6 +1,6 @@
 from itertools import count, filterfalse, tee
 from queue import Empty, Queue
-from time import monotonic
+from time import monotonic, time
 from typing import (
     Any,
     Callable,
@@ -255,9 +255,11 @@ class Batches(Task):
                 connection_errors=connection_errors,
             )
             put_buffer(request)
-            signals.task_received.send(sender=consumer, request=request) # Emit task received signal
+
+            # Emit task received signal
+            signals.task_received.send(sender=consumer, request=request)
+
             if task_sends_events:
-                # Emit task received event
                 send_event(
                     "task-received",
                     uuid=request.id,
@@ -372,12 +374,9 @@ class Batches(Task):
 
         def on_accepted(pid: int, time_accepted: float) -> None:
             for req in acks_early:
+                # Convert monotonic time_accepted to absolute time
+                req.time_start = time() - (monotonic() - time_accepted)
                 req.acknowledge()
-
-            for req in requests:
-                # Start time of the task, which will be useful in calculating runtime of the task
-                req.start_time = time_accepted
-                # Emit task started event
                 req.send_event("task-started")
 
         def on_return(result: Optional[Any]) -> None:
