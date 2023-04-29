@@ -1,6 +1,6 @@
 from itertools import count, filterfalse, tee
 from queue import Empty, Queue
-from time import monotonic
+from time import monotonic, time
 from typing import (
     Any,
     Callable,
@@ -17,6 +17,7 @@ from typing import (
 from celery_batches.trace import apply_batches_task
 
 from celery import VERSION as CELERY_VERSION
+from celery import signals
 from celery.app import Celery
 from celery.app.task import Task
 from celery.concurrency.base import BasePool
@@ -200,6 +201,9 @@ class Batches(Task):
         connection_errors = consumer.connection_errors
 
         eventer = consumer.event_dispatcher
+        events = eventer and eventer.enabled
+        send_event = eventer and eventer.send
+        task_sends_events = events and task.send_events
 
         Request = symbol_by_name(task.Request)
         # Celery 5.1 added the app argument to create_request_cls.
@@ -252,6 +256,23 @@ class Batches(Task):
                 connection_errors=connection_errors,
             )
             put_buffer(request)
+
+            # Emit task received signal
+            signals.task_received.send(sender=consumer, request=request)
+
+            if task_sends_events:
+                send_event(
+                    "task-received",
+                    uuid=request.id,
+                    name=request.name,
+                    args=request.argsrepr,
+                    kwargs=request.kwargsrepr,
+                    root_id=request.root_id,
+                    parent_id=request.parent_id,
+                    retries=request.request_dict.get("retries", 0),
+                    eta=request.eta and request.eta.isoformat(),
+                    expires=request.expires and request.expires.isoformat(),
+                )
 
             if self._tref is None:  # first request starts flush timer.
                 self._tref = timer.call_repeatedly(self.flush_interval, flush_buffer)
@@ -354,7 +375,10 @@ class Batches(Task):
 
         def on_accepted(pid: int, time_accepted: float) -> None:
             for req in acks_early:
+                # Convert monotonic time_accepted to absolute time
+                req.time_start = time() - (monotonic() - time_accepted)
                 req.acknowledge()
+                req.send_event("task-started")
 
         def on_return(result: Optional[Any]) -> None:
             for req in acks_late:
